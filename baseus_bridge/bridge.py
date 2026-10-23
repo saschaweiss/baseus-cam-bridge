@@ -32,6 +32,10 @@ KEEPALIVE_SEC = 20
 CAMERAS_FILE = os.environ.get("BASEUS_CAMERAS_FILE", "/run/baseus/cameras.json")
 # 0 = main/HD stream, 1 = sub/SD stream. SD is lighter and often loads faster.
 STREAM_TYPE = int(os.environ.get("BASEUS_STREAM_TYPE", "0"))
+# Proactively re-send the live-open commands every N seconds (0 = off). The
+# HomeStation appears to end a live session after a fixed time unless the
+# client refreshes it, the same way the official app keeps live view alive.
+LIVE_REFRESH_SEC = int(os.environ.get("BASEUS_LIVE_REFRESH_SEC", "0"))
 
 
 def log(*a):
@@ -157,8 +161,13 @@ class CameraBridge(BinarySession):
         await self._open_video()
         last = self.reasm.emitted
         stalls = 0
+        last_refresh = time.monotonic()
         while not self.dead.is_set():
             await asyncio.sleep(KEEPALIVE_SEC)
+            if LIVE_REFRESH_SEC and time.monotonic() - last_refresh >= LIVE_REFRESH_SEC:
+                log(">>> refreshing live session")
+                await self._open_video()
+                last_refresh = time.monotonic()
             if self.reasm.emitted == last:
                 stalls += 1
                 log(f">>> stall #{stalls}; re-opening")

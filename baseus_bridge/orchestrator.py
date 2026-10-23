@@ -74,9 +74,10 @@ def _run_on_demand_cmd(slug: str) -> str:
     py = shlex.quote(sys.executable)
     bridge = f"{py} -m baseus_bridge.bridge --camera $MTX_PATH"
     ff = (
-        "ffmpeg -hide_banner -loglevel warning -fflags +genpts "
+        "ffmpeg -hide_banner -loglevel warning "
+        "-use_wallclock_as_timestamps 1 "
         "-analyzeduration 3M -probesize 3M "
-        f"-f h264 -framerate {FRAMERATE} -i - -c:v copy "
+        "-f h264 -i - -c:v copy "
         "-f rtsp -rtsp_transport tcp rtsp://localhost:$RTSP_PORT/$MTX_PATH"
     )
     return f"sh -c {shlex.quote(f'{bridge} | {ff}')}"

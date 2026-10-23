@@ -26,7 +26,7 @@ RUN set -eux; \
 # Fetched as a source tarball (no git needed in the image).
 ARG BASEUS_REF=main
 RUN pip3 install --no-cache-dir --break-system-packages \
-        "https://github.com/pickeld/baseus-cam-bridge/archive/${BASEUS_REF}.tar.gz"
+        "https://github.com/saschaweiss/baseus-cam-bridge/archive/${BASEUS_REF}.tar.gz"
 
 ENV BASEUS_RUNTIME_DIR=/data/run \
     MEDIAMTX_BIN=/usr/local/bin/mediamtx \
