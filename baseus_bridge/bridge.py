@@ -51,6 +51,9 @@ class CameraBridge(BinarySession):
         self.cam = cam
         self.key = P.aes_key(cam["p2p_password"])
         self.reasm = P.VideoReassembler(self.key)
+        # Channel 2 is parsed for statistics only (audio or a second stream).
+        self.reasm2 = P.VideoReassembler(self.key, start_on_sps=False)
+        self.reorder = {1: P.DrwReorder(), 2: P.DrwReorder()}
         self.login_ok = False
         self.logged_in = asyncio.Event()
         self.out = sys.stdout.buffer
@@ -83,13 +86,17 @@ class CameraBridge(BinarySession):
         await self.send(make_drw_ack_pkt(pkt))
         if pkt._channel == Channel.Video:
             try:
-                for frame in self.reasm.feed(raw):
-                    self.out.write(frame)
+                for chunk in self.reorder[1].feed(pkt._cmd_idx, raw):
+                    for frame in self.reasm.feed(chunk):
+                        self.out.write(frame)
                 self.out.flush()
             except (BrokenPipeError, ValueError):
                 self.dead.set()
             return
         if pkt._channel == Channel.Audio:
+            for chunk in self.reorder[2].feed(pkt._cmd_idx, raw):
+                for _ in self.reasm2.feed(chunk):
+                    pass
             return
         parsed = P.parse_command_response(raw)
         if parsed and parsed[0] == P.CMD_LOGIN and parsed[1] == 0:
@@ -184,9 +191,13 @@ class CameraBridge(BinarySession):
                 log(">>> refreshing live session")
                 await self._open_video()
                 last_refresh = time.monotonic()
-            r = self.reasm
+            r, o1, o2, r2 = self.reasm, self.reorder[1], self.reorder[2], self.reasm2
             log(f">>> stats: +{r.emitted - last} frames/{KEEPALIVE_SEC}s, "
-                f"partial_drops={r.partial_drops}, rejected={r.reject_drops}")
+                f"partial_drops={r.partial_drops}, rejected={r.reject_drops} "
+                f"(mod16={r.rej_mod16} not00={r.rej_not00} entype={r.rej_entype}), "
+                f"hevc={r.hevc_frames}, vfm={r.vfm_counts} | "
+                f"ch1 dups={o1.dups} reord={o1.reordered} gaps={o1.gaps} | "
+                f"ch2 bytes={o2.bytes} vfm={r2.vfm_counts} emitted={r2.emitted}")
             if self.reasm.emitted == last:
                 stalls += 1
                 log(f">>> stall #{stalls}; re-opening")
