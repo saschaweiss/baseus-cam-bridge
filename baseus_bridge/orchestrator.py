@@ -74,7 +74,7 @@ def _run_on_demand_cmd(slug: str) -> str:
     py = shlex.quote(sys.executable)
     bridge = f"{py} -m baseus_bridge.bridge --camera $MTX_PATH"
     ff = (
-        "ffmpeg -hide_banner -loglevel warning "
+        "ffmpeg -hide_banner -loglevel error "
         "-use_wallclock_as_timestamps 1 "
         "-analyzeduration 3M -probesize 3M "
         "-f h264 -i - -c:v copy "

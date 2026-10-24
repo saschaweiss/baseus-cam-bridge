@@ -36,6 +36,9 @@ STREAM_TYPE = int(os.environ.get("BASEUS_STREAM_TYPE", "0"))
 # HomeStation appears to end a live session after a fixed time unless the
 # client refreshes it, the same way the official app keeps live view alive.
 LIVE_REFRESH_SEC = int(os.environ.get("BASEUS_LIVE_REFRESH_SEC", "0"))
+# XM heartbeat interval in seconds (0 = off). The official app sends cmd 2001
+# every ~3 s; the HomeStation ends live sessions that stop sending it.
+HEARTBEAT_SEC = float(os.environ.get("BASEUS_HEARTBEAT_SEC", "3"))
 
 
 def log(*a):
@@ -128,6 +131,16 @@ class CameraBridge(BinarySession):
                              {"channel": ch, "camera_sn": sn,
                               "streamType": STREAM_TYPE, "videoKeepAlive_2": 0})
 
+    async def _heartbeat_loop(self):
+        while not self.dead.is_set():
+            await asyncio.sleep(HEARTBEAT_SEC)
+            try:
+                idx = self.outgoing_command_idx
+                self.outgoing_command_idx += 1
+                await self.send(DrwPkt(Channel.Command.value, idx, P.build_heartbeat()))
+            except Exception as e:  # noqa: BLE001 - never kill the stream for this
+                log(f">>> heartbeat send failed: {e}")
+
     async def _do_login(self) -> bool:
         await asyncio.sleep(0.5)
         user = self.cam["device_sn"]
@@ -159,6 +172,9 @@ class CameraBridge(BinarySession):
             return
         log(">>> login ok; opening video")
         await self._open_video()
+        if HEARTBEAT_SEC > 0:
+            asyncio.create_task(self._heartbeat_loop())
+            log(f">>> heartbeat every {HEARTBEAT_SEC:g}s")
         last = self.reasm.emitted
         stalls = 0
         last_refresh = time.monotonic()

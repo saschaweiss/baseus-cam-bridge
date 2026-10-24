@@ -38,6 +38,7 @@ CMD_CLOSEVIDEO = 3
 CMD_DEVINFO = 100
 CMD_GET_CAMERA_LIST = 376
 CMD_HOMEBASE_LIVE_ENABLE = 390
+CMD_HEARTBEAT = 2001
 
 
 def md5hex(s: str) -> str:
@@ -71,6 +72,18 @@ def build_command(cmd: int, payload: bytes) -> bytes:
     h[12:14] = struct.pack("<H", len(payload))
     h[14:16] = struct.pack("<H", cmd)
     return bytes(h) + payload
+
+
+def build_heartbeat() -> bytes:
+    """Empty XM heartbeat (cmd 2001, frame model 0xE0, no payload).
+
+    The app sends this every ~3 s on the command channel while live view is
+    open; without it the HomeStation closes the live session after ~120 s.
+    Layout per gazirov/baseus-security-ha (baseus_s1/autonomous.py).
+    """
+    h = bytearray(build_command(CMD_HEARTBEAT, b""))
+    h[5] = 0xE0
+    return bytes(h)
 
 
 def command_json(cmd: int, obj: dict) -> bytes:
