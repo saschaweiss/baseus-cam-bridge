@@ -46,6 +46,7 @@ def main() -> None:
     os.environ["BASEUS_CLOSE_AFTER"] = str(opts.get("close_after", 30))
     os.environ["BASEUS_LIVE_REFRESH_SEC"] = str(opts.get("live_refresh", 0))
     os.environ["BASEUS_HEARTBEAT_SEC"] = str(opts.get("heartbeat", 3))
+    os.environ["BASEUS_TIMESTAMPS"] = str(opts.get("timestamps", "wallclock"))
 
     print(
         "Starting Baseus Cam Bridge (RTSP :8554, HLS :8888, WebRTC :8889)...",

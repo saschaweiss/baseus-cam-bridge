@@ -184,6 +184,9 @@ class CameraBridge(BinarySession):
                 log(">>> refreshing live session")
                 await self._open_video()
                 last_refresh = time.monotonic()
+            r = self.reasm
+            log(f">>> stats: +{r.emitted - last} frames/{KEEPALIVE_SEC}s, "
+                f"partial_drops={r.partial_drops}, rejected={r.reject_drops}")
             if self.reasm.emitted == last:
                 stalls += 1
                 log(f">>> stall #{stalls}; re-opening")

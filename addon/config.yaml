@@ -1,5 +1,5 @@
 name: Baseus Cam Bridge
-version: "0.1.11"
+version: "0.1.12"
 slug: baseus_cam_bridge
 description: Local RTSP/HLS/WebRTC gateway for Baseus Security cameras
 url: https://github.com/saschaweiss/baseus-cam-bridge/tree/main/addon
@@ -34,6 +34,7 @@ options:
   close_after: 30
   live_refresh: 0
   heartbeat: 3
+  timestamps: wallclock
 schema:
   account: str
   password: password
@@ -47,3 +48,4 @@ schema:
   close_after: int(0,600)
   live_refresh: int(0,600)
   heartbeat: int(0,30)
+  timestamps: list(wallclock|fixed)

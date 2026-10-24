@@ -39,6 +39,8 @@ CLOSE_AFTER = os.environ.get("BASEUS_CLOSE_AFTER", "30")
 # Always-on: keep every camera streaming from startup (instant load, best for
 # mains-powered cameras). Off = on-demand (battery friendly).
 ALWAYS_ON = os.environ.get("BASEUS_ALWAYS_ON", "0") not in ("0", "false", "no")
+# "wallclock" = stamp frames on arrival; "fixed" = assume BASEUS_FRAMERATE.
+TIMESTAMPS = os.environ.get("BASEUS_TIMESTAMPS", "wallclock").lower()
 
 
 def log(*a):
@@ -73,11 +75,14 @@ def _write_cameras_file(cams: list) -> list[dict]:
 def _run_on_demand_cmd(slug: str) -> str:
     py = shlex.quote(sys.executable)
     bridge = f"{py} -m baseus_bridge.bridge --camera $MTX_PATH"
+    if TIMESTAMPS == "fixed":
+        ts = f"-fflags +genpts -f h264 -framerate {FRAMERATE} "
+    else:
+        ts = "-use_wallclock_as_timestamps 1 -f h264 "
     ff = (
         "ffmpeg -hide_banner -loglevel error "
-        "-use_wallclock_as_timestamps 1 "
         "-analyzeduration 3M -probesize 3M "
-        "-f h264 -i - -c:v copy "
+        f"{ts}-i - -c:v copy "
         "-f rtsp -rtsp_transport tcp rtsp://localhost:$RTSP_PORT/$MTX_PATH"
     )
     return f"sh -c {shlex.quote(f'{bridge} | {ff}')}"

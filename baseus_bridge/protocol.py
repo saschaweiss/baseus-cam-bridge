@@ -123,6 +123,8 @@ class VideoReassembler:
         self._started = not start_on_sps
         self.frames = 0
         self.emitted = 0
+        self.partial_drops = 0   # frames lost to a missing/out-of-order fragment
+        self.reject_drops = 0    # complete frames rejected (bad size / not Annex-B)
 
     def feed(self, chunk: bytes) -> Iterator[bytes]:
         self._buf += chunk
@@ -175,6 +177,8 @@ class VideoReassembler:
                 self._f_next = 0
                 return self._finish(bytes(self._fbuf), self._f_en)
         else:
+            if self._f_next:
+                self.partial_drops += 1
             self._f_next = 0  # loss / other substream -> drop partial
         return None
 
@@ -182,9 +186,11 @@ class VideoReassembler:
         self.frames += 1
         if entype:
             if len(data) % 16:
+                self.reject_drops += 1
                 return None
             data = aes_decrypt(self.key, data)
         if data[:1] != b"\x00":  # wrong-key / cached frame
+            self.reject_drops += 1
             return None
         if not self._started:
             if b"\x00\x00\x00\x01\x27" not in data[:8] and b"\x00\x00\x01\x27" not in data[:8]:
