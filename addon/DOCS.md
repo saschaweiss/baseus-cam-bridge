@@ -14,11 +14,11 @@ only contacted while something is watching.
 | `region` | `AUTO` | `AUTO` tries US/EU/AU; or force `US` / `EU` / `AU`. |
 | `country_code` | `1` | Phone country code used at login (e.g. `1`, `44`, `61`). |
 | `include_offline` | `true` | Also create paths for currently-offline cameras. |
-| `framerate` | `25` | Assumed input framerate for muxing. |
 | `stream_quality` | `hd` | `hd` (main stream) or `sd` (sub stream — lighter, loads faster). |
 | `always_on` | `false` | Keep every camera streaming from startup (instant load; best for mains-powered cameras). `false` = on-demand (battery friendly). |
 | `start_timeout` | `60` | Seconds to wait for a camera's first frame before giving up. Raise if cameras wake slowly. |
 | `close_after` | `30` | Seconds to keep a stream warm after the last viewer leaves. Higher = faster re-opens, more battery/bandwidth. Ignored when `always_on` is set. |
+| `heartbeat` | `3` | Seconds between XM heartbeats that keep a live session open. Without them the HomeStation ends the stream after about 2 minutes. `0` disables them. |
 
 Example:
 
@@ -28,11 +28,11 @@ password: your-baseus-password
 region: AUTO
 country_code: "1"
 include_offline: true
-framerate: 25
 stream_quality: hd
 always_on: false
 start_timeout: 60
 close_after: 30
+heartbeat: 3
 ```
 
 ### Tuning for reliability / faster loading

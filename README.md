@@ -169,6 +169,7 @@ All settings are environment variables (see `.env.example`):
 | `BASEUS_RTSP_PORT` | `8554` | RTSP port |
 | `BASEUS_HLS_PORT` | `8888` | HLS port |
 | `BASEUS_WEBRTC_PORT` | `8889` | WebRTC port |
+| `BASEUS_HEARTBEAT_SEC` | `3` | XM heartbeat interval; keeps live view open past ~2 min (`0` = off) |
 
 Your credentials live only in `.env` (git-ignored) and a runtime file inside the
 container (`tmpfs`, mode 600). Nothing sensitive is written to the repo.

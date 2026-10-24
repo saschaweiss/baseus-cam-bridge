@@ -26,7 +26,6 @@ MEDIAMTX_BIN = os.environ.get("MEDIAMTX_BIN", "mediamtx")
 RTSP_PORT = os.environ.get("BASEUS_RTSP_PORT", "8554")
 HLS_PORT = os.environ.get("BASEUS_HLS_PORT", "8888")
 WEBRTC_PORT = os.environ.get("BASEUS_WEBRTC_PORT", "8889")
-FRAMERATE = os.environ.get("BASEUS_FRAMERATE", "25")
 INCLUDE_OFFLINE = os.environ.get("BASEUS_INCLUDE_OFFLINE", "1") not in ("0", "false", "no")
 
 # Reliability / latency knobs.
@@ -39,8 +38,6 @@ CLOSE_AFTER = os.environ.get("BASEUS_CLOSE_AFTER", "30")
 # Always-on: keep every camera streaming from startup (instant load, best for
 # mains-powered cameras). Off = on-demand (battery friendly).
 ALWAYS_ON = os.environ.get("BASEUS_ALWAYS_ON", "0") not in ("0", "false", "no")
-# "wallclock" = stamp frames on arrival; "fixed" = assume BASEUS_FRAMERATE.
-TIMESTAMPS = os.environ.get("BASEUS_TIMESTAMPS", "wallclock").lower()
 
 
 def log(*a):
@@ -75,14 +72,13 @@ def _write_cameras_file(cams: list) -> list[dict]:
 def _run_on_demand_cmd(slug: str) -> str:
     py = shlex.quote(sys.executable)
     bridge = f"{py} -m baseus_bridge.bridge --camera $MTX_PATH"
-    if TIMESTAMPS == "fixed":
-        ts = f"-fflags +genpts -f h264 -framerate {FRAMERATE} "
-    else:
-        ts = "-use_wallclock_as_timestamps 1 -f h264 "
     ff = (
+        # Raw H.264 has no timestamps: stamp each frame with its arrival time
+        # rather than assuming a framerate (cameras differ, e.g. 15 fps).
         "ffmpeg -hide_banner -loglevel error "
+        "-use_wallclock_as_timestamps 1 "
         "-analyzeduration 3M -probesize 3M "
-        f"{ts}-i - -c:v copy "
+        "-f h264 -i - -c:v copy "
         "-f rtsp -rtsp_transport tcp rtsp://localhost:$RTSP_PORT/$MTX_PATH"
     )
     return f"sh -c {shlex.quote(f'{bridge} | {ff}')}"

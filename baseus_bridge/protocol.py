@@ -61,67 +61,6 @@ def aes_decrypt(key: bytes, data: bytes) -> bytes:
     return pt
 
 
-_CBC_IV = hashlib.md5(b"xmitech").digest()
-
-
-def aes_decrypt_cbc(key: bytes, data: bytes) -> bytes:
-    """AES-CBC/PKCS7 (EnType 4, IV = md5("xmitech")) as in the Android SDK."""
-    if not data or len(data) % 16:
-        return data
-    pt = AES.new(key, AES.MODE_CBC, iv=_CBC_IV).decrypt(data)
-    pad = pt[-1]
-    if 1 <= pad <= 16 and pt[-pad:] == bytes([pad]) * pad:
-        pt = pt[:-pad]
-    return pt
-
-
-class DrwReorder:
-    """Restore PPPP DRW order on one channel.
-
-    The device sends a byte stream split into DRW packets with a 16-bit index
-    over UDP; packets can arrive twice (retransmit) or out of order. Feeding
-    them straight into the XM parser corrupts frames, so deliver payloads
-    strictly in index order, drop duplicates, and skip a gap only when it has
-    clearly been lost (more than ``window`` newer packets are waiting).
-    """
-
-    def __init__(self, window: int = 64):
-        self.window = window
-        self.next = None
-        self.pending: dict[int, bytes] = {}
-        self.dups = 0
-        self.reordered = 0
-        self.gaps = 0
-        self.bytes = 0
-
-    def feed(self, idx: int, payload: bytes) -> list[bytes]:
-        if self.next is None:
-            self.next = idx
-        delta = (idx - self.next) & 0xFFFF
-        if delta >= 0x8000 or idx in self.pending:  # already delivered / dup
-            self.dups += 1
-            return []
-        if delta:
-            self.reordered += 1
-        self.pending[idx] = payload
-        out = self._drain()
-        if len(self.pending) > self.window:
-            # The packet at self.next is gone: jump to the oldest waiting one.
-            self.gaps += 1
-            self.next = min(self.pending, key=lambda i: (i - self.next) & 0xFFFF)
-            out += self._drain()
-        return out
-
-    def _drain(self) -> list[bytes]:
-        out = []
-        while self.next in self.pending:
-            data = self.pending.pop(self.next)
-            self.bytes += len(data)
-            out.append(data)
-            self.next = (self.next + 1) & 0xFFFF
-        return out
-
-
 def build_command(cmd: int, payload: bytes) -> bytes:
     """Build a 24-byte-header app->device command frame."""
     h = bytearray(24)
@@ -136,11 +75,11 @@ def build_command(cmd: int, payload: bytes) -> bytes:
 
 
 def build_heartbeat() -> bytes:
-    """Empty XM heartbeat (cmd 2001, frame model 0xE0, no payload).
+    """Empty XM heartbeat: cmd 2001, frame model 0xE0, no payload.
 
-    The app sends this every ~3 s on the command channel while live view is
-    open; without it the HomeStation closes the live session after ~120 s.
-    Layout per gazirov/baseus-security-ha (baseus_s1/autonomous.py).
+    The official app sends this every ~3 s on the command channel while live
+    view is open. Without it the HomeStation ends the live session after
+    about 120 s.
     """
     h = bytearray(build_command(CMD_HEARTBEAT, b""))
     h[5] = 0xE0
@@ -165,6 +104,45 @@ def parse_command_response(raw: bytes):
     return cmd, entype, raw[24:24 + ln]
 
 
+class DrwReorder:
+    """Restore PPPP DRW order on one channel.
+
+    The device sends the A/V byte stream split into DRW packets with a 16-bit
+    index over UDP. Packets arrive twice (retransmits) or out of order, and
+    feeding them to the parser in arrival order corrupts frames. This delivers
+    payloads strictly in index order, drops duplicates, and skips a missing
+    packet only once ``window`` newer packets are waiting (it is then lost).
+    """
+
+    def __init__(self, window: int = 64):
+        self.window = window
+        self.next = None
+        self.pending: dict[int, bytes] = {}
+        self.dups = 0
+        self.gaps = 0
+
+    def feed(self, idx: int, payload: bytes) -> list[bytes]:
+        if self.next is None:
+            self.next = idx
+        if ((idx - self.next) & 0xFFFF) >= 0x8000 or idx in self.pending:
+            self.dups += 1  # already delivered or already waiting
+            return []
+        self.pending[idx] = payload
+        out = self._drain()
+        if len(self.pending) > self.window:
+            self.gaps += 1
+            self.next = min(self.pending, key=lambda i: (i - self.next) & 0xFFFF)
+            out += self._drain()
+        return out
+
+    def _drain(self) -> list[bytes]:
+        out = []
+        while self.next in self.pending:
+            out.append(self.pending.pop(self.next))
+            self.next = (self.next + 1) & 0xFFFF
+        return out
+
+
 class VideoReassembler:
     """Turns a raw A/V byte stream into decrypted Annex-B video frames.
 
@@ -184,13 +162,6 @@ class VideoReassembler:
         self._started = not start_on_sps
         self.frames = 0
         self.emitted = 0
-        self.partial_drops = 0   # frames lost to a missing/out-of-order fragment
-        self.reject_drops = 0    # complete frames rejected (any reason below)
-        self.rej_mod16 = 0       # encrypted blob not a multiple of 16 bytes
-        self.rej_not00 = 0       # decrypted data does not start like Annex-B
-        self.rej_entype = 0      # unknown encryption type
-        self.hevc_frames = 0     # frames flagged as H.265 in the XM header
-        self.vfm_counts: dict[int, int] = {}
 
     def feed(self, chunk: bytes) -> Iterator[bytes]:
         self._buf += chunk
@@ -218,10 +189,6 @@ class VideoReassembler:
             fn = struct.unpack_from("<H", buf, off + 6)[0]
             pkt_cnt = struct.unpack_from("<H", buf, off + 8)[0]
             cur_pkt = struct.unpack_from("<H", buf, off + 10)[0]
-            if cur_pkt == 1:
-                self.vfm_counts[vfm] = self.vfm_counts.get(vfm, 0) + 1
-                if vfm in (1, 2) and buf[off + 15] & 0x80:
-                    self.hevc_frames += 1
             payload = bytes(buf[off + 24:off + 24 + dsize])
             off += 24 + dsize
             frame = self._feed_packet(entype, vfm, fn, pkt_cnt, cur_pkt, payload)
@@ -247,8 +214,6 @@ class VideoReassembler:
                 self._f_next = 0
                 return self._finish(bytes(self._fbuf), self._f_en)
         else:
-            if self._f_next:
-                self.partial_drops += 1
             self._f_next = 0  # loss / other substream -> drop partial
         return None
 
@@ -256,20 +221,9 @@ class VideoReassembler:
         self.frames += 1
         if entype:
             if len(data) % 16:
-                self.reject_drops += 1
-                self.rej_mod16 += 1
                 return None
-            if entype == 1:
-                data = aes_decrypt(self.key, data)
-            elif entype == 4:
-                data = aes_decrypt_cbc(self.key, data)
-            else:
-                self.reject_drops += 1
-                self.rej_entype += 1
-                return None
+            data = aes_decrypt(self.key, data)
         if data[:1] != b"\x00":  # wrong-key / cached frame
-            self.reject_drops += 1
-            self.rej_not00 += 1
             return None
         if not self._started:
             if b"\x00\x00\x00\x01\x27" not in data[:8] and b"\x00\x00\x01\x27" not in data[:8]:

@@ -32,12 +32,7 @@ KEEPALIVE_SEC = 20
 CAMERAS_FILE = os.environ.get("BASEUS_CAMERAS_FILE", "/run/baseus/cameras.json")
 # 0 = main/HD stream, 1 = sub/SD stream. SD is lighter and often loads faster.
 STREAM_TYPE = int(os.environ.get("BASEUS_STREAM_TYPE", "0"))
-# Proactively re-send the live-open commands every N seconds (0 = off). The
-# HomeStation appears to end a live session after a fixed time unless the
-# client refreshes it, the same way the official app keeps live view alive.
-LIVE_REFRESH_SEC = int(os.environ.get("BASEUS_LIVE_REFRESH_SEC", "0"))
-# XM heartbeat interval in seconds (0 = off). The official app sends cmd 2001
-# every ~3 s; the HomeStation ends live sessions that stop sending it.
+# XM heartbeat interval in seconds (0 = off). Keeps the live session open.
 HEARTBEAT_SEC = float(os.environ.get("BASEUS_HEARTBEAT_SEC", "3"))
 
 
@@ -51,9 +46,7 @@ class CameraBridge(BinarySession):
         self.cam = cam
         self.key = P.aes_key(cam["p2p_password"])
         self.reasm = P.VideoReassembler(self.key)
-        # Channel 2 is parsed for statistics only (audio or a second stream).
-        self.reasm2 = P.VideoReassembler(self.key, start_on_sps=False)
-        self.reorder = {1: P.DrwReorder(), 2: P.DrwReorder()}
+        self.reorder = P.DrwReorder()
         self.login_ok = False
         self.logged_in = asyncio.Event()
         self.out = sys.stdout.buffer
@@ -86,7 +79,7 @@ class CameraBridge(BinarySession):
         await self.send(make_drw_ack_pkt(pkt))
         if pkt._channel == Channel.Video:
             try:
-                for chunk in self.reorder[1].feed(pkt._cmd_idx, raw):
+                for chunk in self.reorder.feed(pkt._cmd_idx, raw):
                     for frame in self.reasm.feed(chunk):
                         self.out.write(frame)
                 self.out.flush()
@@ -94,9 +87,6 @@ class CameraBridge(BinarySession):
                 self.dead.set()
             return
         if pkt._channel == Channel.Audio:
-            for chunk in self.reorder[2].feed(pkt._cmd_idx, raw):
-                for _ in self.reasm2.feed(chunk):
-                    pass
             return
         parsed = P.parse_command_response(raw)
         if parsed and parsed[0] == P.CMD_LOGIN and parsed[1] == 0:
@@ -181,26 +171,14 @@ class CameraBridge(BinarySession):
         await self._open_video()
         if HEARTBEAT_SEC > 0:
             asyncio.create_task(self._heartbeat_loop())
-            log(f">>> heartbeat every {HEARTBEAT_SEC:g}s")
         last = self.reasm.emitted
         stalls = 0
-        last_refresh = time.monotonic()
         while not self.dead.is_set():
             await asyncio.sleep(KEEPALIVE_SEC)
-            if LIVE_REFRESH_SEC and time.monotonic() - last_refresh >= LIVE_REFRESH_SEC:
-                log(">>> refreshing live session")
-                await self._open_video()
-                last_refresh = time.monotonic()
-            r, o1, o2, r2 = self.reasm, self.reorder[1], self.reorder[2], self.reasm2
-            log(f">>> stats: +{r.emitted - last} frames/{KEEPALIVE_SEC}s, "
-                f"partial_drops={r.partial_drops}, rejected={r.reject_drops} "
-                f"(mod16={r.rej_mod16} not00={r.rej_not00} entype={r.rej_entype}), "
-                f"hevc={r.hevc_frames}, vfm={r.vfm_counts} | "
-                f"ch1 dups={o1.dups} reord={o1.reordered} gaps={o1.gaps} | "
-                f"ch2 bytes={o2.bytes} vfm={r2.vfm_counts} emitted={r2.emitted}")
             if self.reasm.emitted == last:
                 stalls += 1
-                log(f">>> stall #{stalls}; re-opening")
+                log(f">>> stall #{stalls}; re-opening "
+                    f"(dups={self.reorder.dups}, gaps={self.reorder.gaps})")
                 await self._open_video()
                 if stalls >= 3:
                     log(">>> persistent stall; exiting"); self.dead.set()
